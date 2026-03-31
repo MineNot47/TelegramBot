@@ -33,6 +33,151 @@ class _TaskCard:
     reward: float
 
 
+def _flyer_difficulty(raw: dict) -> str | None:
+    """
+    Пытаемся понять "сложность" задания Flyer по данным задания.
+    Это эвристика: разные проекты/версии сервиса могут отдавать разные поля.
+    """
+    for k in ("difficulty", "complexity", "level"):
+        v = raw.get(k)
+        if v is None:
+            continue
+        try:
+            n = int(float(v))
+            if n <= 1:
+                return "easy"
+            if n == 2:
+                return "medium"
+            if n >= 3:
+                return "hard"
+        except Exception:
+            pass
+        if isinstance(v, str):
+            s = v.strip().lower()
+            if s in {"easy", "low", "simple"}:
+                return "easy"
+            if s in {"medium", "normal", "avg", "average"}:
+                return "medium"
+            if s in {"hard", "high", "difficult"}:
+                return "hard"
+
+    for k in ("type", "task_type", "action"):
+        v = raw.get(k)
+        if not isinstance(v, str):
+            continue
+        s = v.strip().lower()
+        if "boost" in s:
+            return "hard"
+        if "subscribe" in s or s in {"sub", "subscription"}:
+            return "easy"
+    return None
+
+
+def _flyer_action_ru(raw: dict) -> str | None:
+    """
+    Пытаемся определить тип действия (подписка/лайк/репост/буст) по данным Flyer.
+    Возвращает русский текст для отображения на карточке.
+    """
+    candidates: list[str] = []
+    # Явные поля типа действия
+    for k in ("type", "task_type", "action", "kind", "category"):
+        v = raw.get(k)
+        if v is None:
+            continue
+        if isinstance(v, (int, float)):
+            candidates.append(str(int(v)))
+        elif isinstance(v, str):
+            candidates.append(v.strip())
+
+    # иногда тип лежит глубже
+    data = raw.get("data")
+    if isinstance(data, dict):
+        for k in ("type", "task_type", "action", "kind", "category"):
+            v = data.get(k)
+            if isinstance(v, str) and v.strip():
+                candidates.append(v.strip())
+
+    # Подстраховка: иногда действие видно в названии/описании
+    for k in ("title", "name", "description", "text", "hint", "task", "caption", "channel_name"):
+        v = raw.get(k)
+        if isinstance(v, str) and v.strip():
+            candidates.append(v.strip())
+
+    joined = " ".join(candidates).lower()
+    if not joined:
+        return None
+
+    # Boost / голосование
+    if any(x in joined for x in ("boost", "буст", "голос", "vote", "voting")):
+        return "Буст / Голосование"
+    # Подписка
+    if any(
+        x in joined
+        for x in (
+            "sub",
+            "subscribe",
+            "subscription",
+            "join",
+            "follow",
+            "подпис",
+            "пдп",
+            "подп",
+        )
+    ):
+        return "Подписка"
+    # Лайк/реакция
+    if any(
+        x in joined
+        for x in (
+            "like",
+            "reaction",
+            "react",
+            "emoji",
+            "лайк",
+            "лк",
+            "реакц",
+            "реакц.",
+            "❤️",
+            "❤",
+        )
+    ):
+        return "Лайк / Реакция"
+    # Репост/поделиться
+    if any(
+        x in joined
+        for x in (
+            "repost",
+            "share",
+            "forward",
+            "репост",
+            "реп",
+            "пересл",
+            "поделиться",
+        )
+    ):
+        return "Репост / Поделиться"
+    # Комментарий
+    if any(x in joined for x in ("comment", "reply", "коммент", "комм", "ком", "ответ")):
+        return "Комментарий"
+    # Просмотр
+    if any(x in joined for x in ("view", "watch", "просмотр", "viewing")):
+        return "Просмотр"
+
+    return None
+
+
+def _flyer_reward(raw: dict, settings: SettingsStore) -> float:
+    diff = _flyer_difficulty(raw)
+    if diff == "easy":
+        return settings.get_float("FLYER_REWARD_EASY")
+    if diff == "medium":
+        return settings.get_float("FLYER_REWARD_MEDIUM")
+    if diff == "hard":
+        return settings.get_float("FLYER_REWARD_HARD")
+    # Если сервис не прислал сложность — отдельная настройка.
+    return settings.get_float("FLYER_REWARD_UNKNOWN")
+
+
 def _cache_flyer_set(user_id: int, tasks: list[FlyerTask]) -> None:
     order = [t.signature for t in tasks]
     mapping = {t.signature: t for t in tasks}
@@ -243,10 +388,11 @@ async def tasks_menu(callback: CallbackQuery, bot: Bot, db: Database, flyer: Fly
         )
         if flyer_tasks:
             _cache_flyer_set(callback.from_user.id, flyer_tasks)
-            default_reward = settings.get_float("TASK_REWARD")
             for t in flyer_tasks:
                 title = t.title or "Задание"
-                cards.append(_TaskCard(key=f"f:{t.signature}", title=title, link=t.link, reward=default_reward))
+                reward = _flyer_reward(t.raw, settings)
+                cards.append(_TaskCard(key=f"f:{t.signature}", title=title, link=t.link, reward=reward))
+                await db.upsert_flyer_task_meta(signature=t.signature, reward=reward, title=title, link=t.link)
 
     if not cards:
         await callback.message.answer("📋 Заданий пока нет. Загляните позже.")
@@ -270,6 +416,16 @@ async def _send_task_card(
     if card is None:
         await message.answer("⏳ Список заданий устарел. Нажмите «Заработать» ещё раз.")
         return
+
+    action_line = ""
+    if key.startswith("f:"):
+        signature = key.split(":", 1)[1]
+        ft = _cache_flyer_get(user_id, signature)
+        if ft is not None:
+            action = _flyer_action_ru(ft.raw)
+            if action:
+                action_line = f"🧩 Действие: <b>{action}</b>\n\n"
+
     # Для Flyer-заданий делаем "Подписаться" через callback, чтобы отдать пользователю
     # запасную ссылку/кнопки (некоторые задачи приходят со странными URL).
     if key.startswith("f:"):
@@ -282,6 +438,7 @@ async def _send_task_card(
         reply_markup = _task_card_kb(link=card.link, check_cb=f"task:check:{card.key}", skip_cb=f"task:skip:{card.key}")
     await message.answer(
         f"📌 <b>{card.title}</b>\n\n"
+        f"{action_line}"
         f"Выполняйте это задание и получите <b>{card.reward:.2f}</b> звезд.\n"
         "Нажмите «Подписаться», затем «Проверить».",
         reply_markup=reply_markup,
@@ -303,12 +460,21 @@ async def task_go(callback: CallbackQuery) -> None:
         await callback.message.answer("❌ В этом задании нет ссылки. Сообщите администратору.")
         return
 
+    extra = ""
+    if card.key.startswith("f:"):
+        signature = card.key.split(":", 1)[1]
+        ft = _cache_flyer_get(callback.from_user.id, signature)
+        if ft is not None:
+            action = _flyer_action_ru(ft.raw)
+            if action:
+                extra = f"\n🧩 Действие: <b>{action}</b>"
+
     kb = InlineKeyboardBuilder()
     deep = _telegram_deeplink(link)
     if deep and deep != link:
         kb.row(InlineKeyboardButton(text="📲 Открыть в Telegram", url=deep))
     kb.row(InlineKeyboardButton(text="🌐 Открыть ссылку", url=link))
-    await callback.message.answer(f"🔗 Ссылка на канал/ресурс:\n{link}", reply_markup=kb.as_markup())
+    await callback.message.answer(f"🔗 Ссылка на канал/ресурс:\n{link}{extra}", reply_markup=kb.as_markup())
 
 
 @router.callback_query(F.data.startswith("task:skip:"))
@@ -394,7 +560,14 @@ async def task_check(
             suffix = f" (статус: {status})" if status else ""
             await callback.answer("❌ Не выполнено" + suffix, show_alert=True)
             return
-        reward = settings.get_float("TASK_REWARD")
+        card = _cache_task_get(user.user_id, key)
+        if card is not None:
+            reward = float(card.reward)
+        else:
+            reward = await db.get_flyer_task_reward(signature)
+            if reward is None:
+                # если мета нет — выдаём UNKNOWN
+                reward = settings.get_float("FLYER_REWARD_UNKNOWN")
         await db.mark_flyer_task_done(user.user_id, signature)
         await db.change_balance(user.user_id, reward)
         referrer_id = await db.try_reward_referral(
@@ -550,13 +723,21 @@ async def flyer_task_check(
         return
 
     task = _cache_flyer_get(user.user_id, signature)
-    reward = settings.get_float("TASK_REWARD")
+    reward = await db.get_flyer_task_reward(signature)
+    if reward is None:
+        reward = _flyer_reward(task.raw if task else {}, settings)
+        await db.upsert_flyer_task_meta(
+            signature=signature,
+            reward=reward,
+            title=(task.title if task else None),
+            link=(task.link if task else None),
+        )
     await db.mark_flyer_task_done(user.user_id, signature)
     await db.change_balance(user.user_id, reward)
     referrer_id = await db.try_reward_referral(
         user.user_id,
         ref_reward=settings.get_float("REF_REWARD"),
-        ref_bonus=settings.get_float("REF_BONUS"),
+        ref_bonus=None,
     )
     await callback.answer("✅ Засчитано!")
     await callback.message.answer(f"🎉 Задание выполнено!\n💰 Начислено: <b>+{reward:.2f}</b>")

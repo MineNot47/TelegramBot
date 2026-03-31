@@ -59,7 +59,9 @@ async def _handle_event(
             logger.info("Flyer webhook: user %s frozen, skip credit for signature=%s", user_id_int, signature_str)
             return
         if not await db.is_flyer_task_done(user_id_int, signature_str):
-            reward = settings.get_float("TASK_REWARD")
+            reward = await db.get_flyer_task_reward(signature_str)
+            if reward is None:
+                reward = settings.get_float("FLYER_REWARD_UNKNOWN")
             await db.mark_flyer_task_done(user_id_int, signature_str)
             await db.change_balance(user_id_int, reward)
             logger.info("Flyer webhook: credited user_id=%s signature=%s reward=%.2f", user_id_int, signature_str, reward)

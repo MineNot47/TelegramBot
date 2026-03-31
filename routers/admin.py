@@ -782,6 +782,10 @@ async def settings_menu(message: Message, settings: SettingsStore) -> None:
             ("REF_BONUS", "admin:set:REF_BONUS"),
             ("TASK_REWARD", "admin:set:TASK_REWARD"),
             ("GIFT_REWARD", "admin:set:GIFT_REWARD"),
+            ("FLYER_EASY", "admin:set:FLYER_REWARD_EASY"),
+            ("FLYER_MED", "admin:set:FLYER_REWARD_MEDIUM"),
+            ("FLYER_HARD", "admin:set:FLYER_REWARD_HARD"),
+            ("FLYER_UNK", "admin:set:FLYER_REWARD_UNKNOWN"),
         ],
         columns=2,
     )
@@ -791,6 +795,11 @@ async def settings_menu(message: Message, settings: SettingsStore) -> None:
         f"REF_BONUS: <b>{settings.get_float('REF_BONUS'):.2f}</b>\n"
         f"TASK_REWARD: <b>{settings.get_float('TASK_REWARD'):.2f}</b>\n"
         f"GIFT_REWARD: <b>{settings.get_float('GIFT_REWARD'):.2f}</b>\n\n"
+        "Flyer награды (⭐):\n"
+        f"• EASY: <b>{settings.get_float('FLYER_REWARD_EASY'):.2f}</b>\n"
+        f"• MEDIUM: <b>{settings.get_float('FLYER_REWARD_MEDIUM'):.2f}</b>\n"
+        f"• HARD: <b>{settings.get_float('FLYER_REWARD_HARD'):.2f}</b>\n\n"
+        f"• UNKNOWN: <b>{settings.get_float('FLYER_REWARD_UNKNOWN'):.2f}</b>\n\n"
         "Выберите, что изменить:",
         reply_markup=kb,
     )

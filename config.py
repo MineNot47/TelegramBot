@@ -28,6 +28,13 @@ DEFAULT_SETTINGS = {
     "TASK_REWARD": 1.0,
     "GIFT_REWARD": 0.25,
     "GIFT_COOLDOWN": 86400,  # 24 часа (фиксированно)
+
+    # Множители награды для заданий Flyer по "сложности" (если она приходит в данных задания).
+    # Итоговая награда = TASK_REWARD * multiplier
+    "FLYER_REWARD_EASY": 1.0,
+    "FLYER_REWARD_MEDIUM": 1.5,
+    "FLYER_REWARD_HARD": 2.0,
+    "FLYER_REWARD_UNKNOWN": 1.0,
 }
 
 # Если api.telegram.org недоступен (VPN/блокировки) — укажите прокси:
@@ -40,7 +47,7 @@ PROXY_URL = os.getenv("BOT_PROXY") or os.getenv("HTTPS_PROXY") or os.getenv("ALL
 SUPPORT_USERNAME = os.getenv("SUPPORT_USERNAME", "la_rahati_fe_dunya")  # без @
 RULES_TEXT = os.getenv(
     "RULES_TEXT",
-    "📜 <b>Правила бота (строгая версия)</b>\n\n"
+    "📜 <b>Правила бота</b>\n\n"
     "1) <b>Принятие правил</b>\n"
     "• Используя бота, вы безоговорочно соглашаетесь с этими правилами.\n"
     "• Незнание правил не освобождает от ответственности.\n"

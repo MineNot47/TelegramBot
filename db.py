@@ -112,6 +112,15 @@ class Database:
                 FOREIGN KEY(user_id) REFERENCES users(user_id) ON DELETE CASCADE
             );
 
+            -- Метаданные заданий Flyer (чтобы вебхуки могли начислять ту же награду)
+            CREATE TABLE IF NOT EXISTS flyer_task_meta (
+                signature  TEXT PRIMARY KEY,
+                reward     REAL,
+                title      TEXT,
+                link       TEXT,
+                updated_at INTEGER NOT NULL
+            );
+
             -- Отложенные реферальные награды (после выполнения заданий)
             CREATE TABLE IF NOT EXISTS referrals (
                 user_id       INTEGER PRIMARY KEY,  -- приглашённый
@@ -542,6 +551,33 @@ class Database:
             "INSERT OR REPLACE INTO flyer_task_completions(user_id, signature, done_at) VALUES(?, ?, ?)",
             (int(user_id), signature, int(time.time())),
         )
+
+    async def upsert_flyer_task_meta(
+        self,
+        *,
+        signature: str,
+        reward: float | None,
+        title: str | None = None,
+        link: str | None = None,
+    ) -> None:
+        sig = str(signature).strip()
+        if not sig:
+            return
+        await self.execute(
+            """
+            INSERT OR REPLACE INTO flyer_task_meta(signature, reward, title, link, updated_at)
+            VALUES(?, ?, ?, ?, ?)
+            """,
+            (sig, float(reward) if reward is not None else None, title, link, int(time.time())),
+        )
+
+    async def get_flyer_task_reward(self, signature: str) -> float | None:
+        row = await self.fetchone("SELECT reward FROM flyer_task_meta WHERE signature=?", (str(signature).strip(),))
+        if not row:
+            return None
+        if row["reward"] is None:
+            return None
+        return float(row["reward"])
 
     # ---- gifts ----
     async def get_last_gift_at(self, user_id: int) -> int | None:
