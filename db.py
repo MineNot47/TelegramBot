@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import os
 import time
 from dataclasses import dataclass
 from typing import Any, Iterable, Optional
@@ -24,6 +25,10 @@ class Database:
         self._conn: aiosqlite.Connection | None = None
 
     async def connect(self) -> None:
+        # Убедимся, что папка для БД существует (важно для деплоя, например DB_PATH=/data/bot.sqlite3).
+        dir_path = os.path.dirname(os.path.abspath(self.path))
+        if dir_path and not os.path.exists(dir_path):
+            os.makedirs(dir_path, exist_ok=True)
         self._conn = await aiosqlite.connect(self.path)
         self._conn.row_factory = aiosqlite.Row
         await self._conn.execute("PRAGMA journal_mode=WAL;")

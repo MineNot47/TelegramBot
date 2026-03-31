@@ -52,6 +52,7 @@ async def main() -> None:
     logging.basicConfig(level=logging.INFO)
 
     db_path = (os.getenv("DB_PATH") or "bot.sqlite3").strip() or "bot.sqlite3"
+    logging.info("DB_PATH=%s", db_path)
     db = Database(db_path)
     await db.connect()
     await db.init()
