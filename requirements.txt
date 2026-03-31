@@ -1,0 +1,4 @@
+aiogram==3.*
+aiosqlite==0.20.*
+aiohttp-socks==0.8.*
+flyerapi
