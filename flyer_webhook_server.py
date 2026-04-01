@@ -9,6 +9,7 @@ from aiogram import Bot
 
 from db import Database
 from settings_store import SettingsStore
+import time
 
 logger = logging.getLogger(__name__)
 
@@ -55,6 +56,14 @@ async def _handle_event(
     signature_str = str(signature).strip() if signature is not None else ""
 
     if user_id_int and signature_str and _status_ok(status):
+        # Вебхук может прийти до того, как пользователь нажал /start.
+        # Создаём пользователя в БД (без username), чтобы не падали внешние ключи и начисления.
+        try:
+            await db.upsert_user(user_id_int, username=None, referrer_id=None, now=int(time.time()))
+        except Exception:
+            # если не удалось — дальше всё равно не сможем начислить
+            logger.exception("Flyer webhook: failed to ensure user exists")
+            return
         if await db.is_balance_frozen(user_id_int):
             logger.info("Flyer webhook: user %s frozen, skip credit for signature=%s", user_id_int, signature_str)
             return
