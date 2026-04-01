@@ -117,9 +117,9 @@ async def main() -> None:
         # URL в панели Flyer:
         #   https://<ваш_домен>/flyer/webhook/<FLYER_WEBHOOK_SECRET>
         webhook_secret = (os.getenv("FLYER_WEBHOOK_SECRET") or "").strip()
-        # Railway/Heroku-like платформы обычно дают порт в переменной PORT.
-        # Если PORT не задан — используем FLYER_WEBHOOK_PORT (удобно для локального запуска).
-        port_raw = (os.getenv("PORT") or "").strip() or (os.getenv("FLYER_WEBHOOK_PORT") or "").strip()
+        # Если задан FLYER_WEBHOOK_PORT — используем его (важно для Railway Networking target port).
+        # Иначе используем PORT (Railway/Heroku-like).
+        port_raw = (os.getenv("FLYER_WEBHOOK_PORT") or "").strip() or (os.getenv("PORT") or "").strip()
         webhook_port = int(port_raw) if port_raw.isdigit() else None
 
         runner: web.AppRunner | None = None
