@@ -16,6 +16,7 @@ from states import (
     BroadcastState,
     ChannelManageState,
     FreezeState,
+    MaintenanceState,
     PromoCreateState,
     RulesEditState,
     SettingsState,
@@ -39,6 +40,33 @@ MAIN_MENU_TEXTS = {
     "ℹ️ О боте",
     "👑 Админ-панель",
 }
+
+def _mt_get_enabled(settings: SettingsStore) -> bool:
+    try:
+        return settings.get_int("MAINTENANCE_ENABLED") == 1
+    except Exception:
+        return False
+
+
+def _mt_get_exc(settings: SettingsStore) -> set[int]:
+    try:
+        raw = settings.get_str("MAINTENANCE_EXCEPT_IDS")
+    except Exception:
+        raw = ""
+    out: set[int] = set()
+    for p in str(raw).replace(";", ",").split(","):
+        s = p.strip()
+        if not s:
+            continue
+        try:
+            out.add(int(s))
+        except Exception:
+            continue
+    return out
+
+
+async def _mt_set_exc(settings: SettingsStore, ids: set[int]) -> None:
+    await settings.set_value("MAINTENANCE_EXCEPT_IDS", ",".join(str(x) for x in sorted(ids)))
 
 
 def _admin_only(message: Message) -> bool:
@@ -904,6 +932,144 @@ async def rules_edit_apply(message: Message, state: FSMContext, settings: Settin
     await settings.set_value("RULES_TEXT", text)
     await state.clear()
     await message.answer("✅ Правила обновлены.", reply_markup=admin_menu())
+
+
+# ---- Технические работы ----
+@router.message(F.text == "🛠 Техработы")
+async def maintenance_menu(message: Message, settings: SettingsStore) -> None:
+    enabled = _mt_get_enabled(settings)
+    exc = _mt_get_exc(settings)
+    status = "✅ ВКЛ" if enabled else "❌ ВЫКЛ"
+    kb = admin_simple_actions_kb(
+        [
+            ("🔁 Переключить", "admin:mt:toggle"),
+            ("➕ Исключение", "admin:mt:add"),
+            ("➖ Удалить", "admin:mt:del"),
+            ("📋 Список", "admin:mt:list"),
+            ("📝 Текст", "admin:mt:text"),
+        ],
+        columns=2,
+    )
+    await message.answer(
+        "🛠 <b>Технические работы</b>\n\n"
+        f"Статус: <b>{status}</b>\n"
+        f"Исключений: <b>{len(exc)}</b>\n\n"
+        "Во время техработ бот отвечает только админам и пользователям из исключений.",
+        reply_markup=kb,
+    )
+
+
+@router.callback_query(F.data == "admin:mt:toggle")
+async def maintenance_toggle(callback: CallbackQuery, settings: SettingsStore) -> None:
+    if not callback.message:
+        return
+    enabled = _mt_get_enabled(settings)
+    await settings.set_value("MAINTENANCE_ENABLED", 0 if enabled else 1)
+    await callback.answer("Готово.")
+    await callback.message.answer(f"🛠 Техработы: <b>{'включены' if not enabled else 'выключены'}</b>")
+
+
+@router.callback_query(F.data == "admin:mt:list")
+async def maintenance_list(callback: CallbackQuery, settings: SettingsStore) -> None:
+    if not callback.message:
+        return
+    enabled = _mt_get_enabled(settings)
+    exc = sorted(_mt_get_exc(settings))
+    try:
+        text = settings.get_str("MAINTENANCE_TEXT")
+    except Exception:
+        text = ""
+    lines: list[str] = [
+        "🛠 <b>Техработы</b>",
+        f"Статус: <b>{'ВКЛ' if enabled else 'ВЫКЛ'}</b>",
+        "",
+        "Исключения (ID):",
+    ]
+    if exc:
+        lines += [f"• <code>{x}</code>" for x in exc[:50]]
+    else:
+        lines.append("• (пусто)")
+    if text:
+        lines += ["", "Текст (превью):", text[:400] + ("…" if len(text) > 400 else "")]
+    await callback.answer()
+    await callback.message.answer("\n".join(lines))
+
+
+@router.callback_query(F.data.in_({"admin:mt:add", "admin:mt:del"}))
+async def maintenance_exc_start(callback: CallbackQuery, state: FSMContext) -> None:
+    if not callback.message:
+        return
+    action = callback.data.split(":")[-1]  # add/del
+    await callback.answer()
+    await state.update_data(mt_action=action)
+    await state.set_state(MaintenanceState.waiting_user_add if action == "add" else MaintenanceState.waiting_user_remove)
+    await callback.message.answer("Введите <b>ID пользователя</b> или <b>@username</b>:")
+
+
+@router.callback_query(F.data == "admin:mt:text")
+async def maintenance_text_start(callback: CallbackQuery, state: FSMContext, settings: SettingsStore) -> None:
+    if not callback.message:
+        return
+    await callback.answer()
+    await state.set_state(MaintenanceState.waiting_text)
+    current = ""
+    try:
+        current = settings.get_str("MAINTENANCE_TEXT")
+    except Exception:
+        current = ""
+    preview = (current[:800] + "…") if current and len(current) > 800 else current
+    await callback.message.answer(
+        "🛠 <b>Текст техработ</b>\n\n"
+        "Отправьте новый текст одним сообщением.\n"
+        "Можно использовать HTML (<code>&lt;b&gt;</code>, ссылки).\n"
+        "Отмена: /cancel\n\n"
+        + ("Текущий (превью):\n" + preview if preview else "Текст не задан.")
+    )
+
+
+@router.message(MaintenanceState.waiting_text)
+async def maintenance_text_apply(message: Message, state: FSMContext, settings: SettingsStore) -> None:
+    text = (message.text or "").strip()
+    if not text:
+        await message.answer("Отправьте текст.")
+        return
+    await settings.set_value("MAINTENANCE_TEXT", text)
+    await state.clear()
+    await message.answer("✅ Текст техработ обновлён.", reply_markup=admin_menu())
+
+
+@router.message(MaintenanceState.waiting_user_add)
+async def maintenance_exc_add(message: Message, state: FSMContext, db: Database, settings: SettingsStore) -> None:
+    raw = (message.text or "").strip()
+    uid = safe_int(raw)
+    if uid is None:
+        u = await db.find_user_by_username(raw)
+        uid = u.user_id if u else None
+    if uid is None:
+        await message.answer("Пользователь не найден. Введите ID или @username.")
+        return
+    exc = _mt_get_exc(settings)
+    exc.add(int(uid))
+    await _mt_set_exc(settings, exc)
+    await state.clear()
+    await message.answer(f"✅ Добавлено в исключения: <code>{int(uid)}</code>")
+
+
+@router.message(MaintenanceState.waiting_user_remove)
+async def maintenance_exc_del(message: Message, state: FSMContext, db: Database, settings: SettingsStore) -> None:
+    raw = (message.text or "").strip()
+    uid = safe_int(raw)
+    if uid is None:
+        u = await db.find_user_by_username(raw)
+        uid = u.user_id if u else None
+    if uid is None:
+        await message.answer("Пользователь не найден. Введите ID или @username.")
+        return
+    exc = _mt_get_exc(settings)
+    exc.discard(int(uid))
+    await _mt_set_exc(settings, exc)
+    await state.clear()
+    await message.answer(f"✅ Удалено из исключений: <code>{int(uid)}</code>")
 
 
 @router.callback_query(F.data.startswith("admin:set:"))

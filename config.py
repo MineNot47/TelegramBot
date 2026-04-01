@@ -41,6 +41,15 @@ DEFAULT_SETTINGS = {
     "DICE_WIN_ON_6": 4.0,  # награда при выпадении 6
     "DICE_ROLL_COST_XTR": 2.0,  # цена за 1 бросок в Telegram Stars (XTR)
     "DICE_WIN_ON_6_XTR": 4.0,  # награда при 6 для броска за Stars
+
+    # Техработы
+    "MAINTENANCE_ENABLED": 0,
+    "MAINTENANCE_EXCEPT_IDS": "",
+    "MAINTENANCE_TEXT": (
+        "🛠 <b>Технические работы</b>\n\n"
+        "Сейчас бот временно недоступен.\n"
+        "Пожалуйста, попробуйте позже."
+    ),
 }
 
 # Если api.telegram.org недоступен (VPN/блокировки) — укажите прокси:
