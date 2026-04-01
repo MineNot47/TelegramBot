@@ -364,6 +364,74 @@ def _cache_task_next(user_id: int, current_key: str) -> str | None:
         return order[0]
 
 
+async def _task_is_done(db: Database, user_id: int, key: str) -> bool:
+    if key.startswith("l:"):
+        chat_id = safe_int(key.split(":", 1)[1])
+        return bool(chat_id is not None and await db.is_task_done(user_id, chat_id))
+    if key.startswith("u:"):
+        link_id = safe_int(key.split(":", 1)[1])
+        return bool(link_id is not None and await db.is_task_link_done(user_id, link_id))
+    if key.startswith("f:"):
+        signature = key.split(":", 1)[1]
+        return await db.is_flyer_task_done(user_id, signature)
+    return False
+
+
+async def _send_next_task_card(
+    message: Message,
+    *,
+    user_id: int,
+    current_key: str,
+    bot: Bot,
+    db: Database,
+    flyer: FlyerClient | None,
+    settings: SettingsStore,
+) -> None:
+    """
+    После успешного выполнения автоматически показывает следующее невыполненное задание.
+    Если заданий больше нет — показывает сообщение + кнопку обновления.
+    """
+    item = _TASK_CACHE.get(user_id)
+    if not item:
+        kb = InlineKeyboardBuilder()
+        kb.button(text="🔄 Обновить задания", callback_data="tasks:menu")
+        kb.adjust(1)
+        await message.answer("📋 Нажмите «Обновить задания», чтобы получить новый список.", reply_markup=kb.as_markup())
+        return
+
+    ts, order, _mapping = item
+    if time.time() - ts > _CACHE_TTL:
+        _TASK_CACHE.pop(user_id, None)
+        kb = InlineKeyboardBuilder()
+        kb.button(text="🔄 Обновить задания", callback_data="tasks:menu")
+        kb.adjust(1)
+        await message.answer("⏳ Список заданий устарел. Нажмите «Обновить задания».", reply_markup=kb.as_markup())
+        return
+
+    if not order:
+        kb = InlineKeyboardBuilder()
+        kb.button(text="🔄 Обновить задания", callback_data="tasks:menu")
+        kb.adjust(1)
+        await message.answer("📋 Заданий пока нет.", reply_markup=kb.as_markup())
+        return
+
+    try:
+        start_i = order.index(current_key)
+    except ValueError:
+        start_i = -1
+
+    for step in range(1, len(order) + 1):
+        candidate = order[(start_i + step) % len(order)]
+        if not await _task_is_done(db, user_id, candidate):
+            await _send_task_card(message, user_id=user_id, key=candidate, bot=bot, db=db, flyer=flyer)
+            return
+
+    kb = InlineKeyboardBuilder()
+    kb.button(text="🔄 Обновить задания", callback_data="tasks:menu")
+    kb.adjust(1)
+    await message.answer("✅ Все задания из списка выполнены!", reply_markup=kb.as_markup())
+
+
 @router.callback_query(F.data == "tasks:menu")
 async def tasks_menu(callback: CallbackQuery, bot: Bot, db: Database, flyer: FlyerClient | None, settings: SettingsStore) -> None:
     if not callback.from_user or not callback.message:
@@ -771,6 +839,15 @@ async def task_check(
                 )
             except Exception:
                 pass
+        await _send_next_task_card(
+            callback.message,
+            user_id=user.user_id,
+            current_key=key,
+            bot=bot,
+            db=db,
+            flyer=flyer,
+            settings=settings,
+        )
         return
     if key.startswith("l:"):
         chat_id = safe_int(key.split(":", 1)[1])
@@ -806,6 +883,15 @@ async def task_check(
                 )
             except Exception:
                 pass
+        await _send_next_task_card(
+            callback.message,
+            user_id=user.user_id,
+            current_key=key,
+            bot=bot,
+            db=db,
+            flyer=flyer,
+            settings=settings,
+        )
         return
 
     if key.startswith("f:"):
@@ -848,6 +934,15 @@ async def task_check(
                 )
             except Exception:
                 pass
+        await _send_next_task_card(
+            callback.message,
+            user_id=user.user_id,
+            current_key=key,
+            bot=bot,
+            db=db,
+            flyer=flyer,
+            settings=settings,
+        )
         return
 
     await callback.answer("Ошибка задания.", show_alert=True)
@@ -867,7 +962,13 @@ async def local_task_open(callback: CallbackQuery, bot: Bot, db: Database, setti
 
 
 @router.callback_query(F.data.startswith("ltask:check:"))
-async def local_task_check(callback: CallbackQuery, bot: Bot, db: Database, settings: SettingsStore) -> None:
+async def local_task_check(
+    callback: CallbackQuery,
+    bot: Bot,
+    db: Database,
+    flyer: FlyerClient | None,
+    settings: SettingsStore,
+) -> None:
     if not callback.from_user or not callback.message:
         return
     user = await db.get_user(callback.from_user.id)
@@ -914,6 +1015,17 @@ async def local_task_check(callback: CallbackQuery, bot: Bot, db: Database, sett
             )
         except Exception:
             pass
+
+    # После награды автоматически показываем следующее задание (если есть).
+    await _send_next_task_card(
+        callback.message,
+        user_id=user.user_id,
+        current_key=f"l:{chat_id}",
+        bot=bot,
+        db=db,
+        flyer=flyer,
+        settings=settings,
+    )
 
 
 @router.callback_query(F.data.startswith("ftask:open:"))
@@ -1012,13 +1124,17 @@ async def flyer_task_check(
             )
         except Exception:
             pass
-        try:
-            await bot.send_message(
-                user.user_id,
-                f"🎁 Реферальный бонус начислен: <b>+{settings.get_float('REF_BONUS'):.2f}</b>",
-            )
-        except Exception:
-            pass
+
+    # После награды автоматически показываем следующее задание (если есть).
+    await _send_next_task_card(
+        callback.message,
+        user_id=user.user_id,
+        current_key=f"f:{signature}",
+        bot=bot,
+        db=db,
+        flyer=flyer,
+        settings=settings,
+    )
 
 
 @router.callback_query(F.data == "task:nolink")
