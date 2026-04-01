@@ -13,7 +13,14 @@ from aiogram.exceptions import TelegramNetworkError
 
 import config
 from db import Database
-from middlewares import BanMiddleware, DebugLogMiddleware, LastSeenMiddleware, RateLimitMiddleware, SponsorMiddleware
+from middlewares import (
+    BanMiddleware,
+    DebugLogMiddleware,
+    LastSeenMiddleware,
+    MaintenanceMiddleware,
+    RateLimitMiddleware,
+    SponsorMiddleware,
+)
 from routers import admin_router, common_router, earn_router, withdraw_router
 from settings_store import SettingsStore
 from flyer_client import FlyerClient
@@ -96,6 +103,7 @@ async def main() -> None:
     # Middleware в aiogram 3 лучше вешать на конкретные события (message/callback_query),
     # иначе они будут получать объект Update, а не Message/CallbackQuery.
     for observer in (dp.message, dp.callback_query):
+        observer.outer_middleware(MaintenanceMiddleware(config.ADMINS))
         observer.outer_middleware(RateLimitMiddleware(config.GLOBAL_RATE_LIMIT_SECONDS))
         observer.outer_middleware(BanMiddleware())
         observer.outer_middleware(SponsorMiddleware(config.ADMINS))

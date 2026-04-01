@@ -8,6 +8,7 @@ from aiogram.types import CallbackQuery, Message, TelegramObject
 
 from db import Database
 from keyboards import sponsors_kb
+from settings_store import SettingsStore
 
 
 class RateLimitMiddleware(BaseMiddleware):
@@ -199,6 +200,105 @@ class SponsorMiddleware(BaseMiddleware):
                 return
 
         return await handler(event, data)
+
+
+class MaintenanceMiddleware(BaseMiddleware):
+    """
+    Режим технических работ:
+    - включается через настройки (MAINTENANCE_ENABLED=1)
+    - пропускает админов и исключения (MAINTENANCE_EXCEPT_IDS)
+    """
+
+    DEFAULT_TEXT = (
+        "🛠 <b>Технические работы</b>\n\n"
+        "Сейчас бот временно недоступен.\n"
+        "Пожалуйста, попробуйте позже."
+    )
+
+    def __init__(self, admins: list[int]) -> None:
+        self.admins = set(int(x) for x in admins)
+
+    @staticmethod
+    def _parse_ids(raw: str | None) -> set[int]:
+        if not raw:
+            return set()
+        out: set[int] = set()
+        for part in str(raw).replace(";", ",").split(","):
+            p = part.strip()
+            if not p:
+                continue
+            try:
+                out.add(int(p))
+            except Exception:
+                continue
+        return out
+
+    async def __call__(
+        self,
+        handler: Callable[[TelegramObject, dict[str, Any]], Awaitable[Any]],
+        event: TelegramObject,
+        data: dict[str, Any],
+    ) -> Any:
+        settings: SettingsStore | None = data.get("settings")
+        db: Database | None = data.get("db")
+        if settings is None or db is None:
+            return await handler(event, data)
+
+        # не блокируем успешные оплаты
+        if isinstance(event, Message) and event.successful_payment:
+            return await handler(event, data)
+
+        user_id: int | None = None
+        if isinstance(event, Message) and event.from_user:
+            user_id = event.from_user.id
+        if isinstance(event, CallbackQuery) and event.from_user:
+            user_id = event.from_user.id
+
+        if user_id is None:
+            return await handler(event, data)
+        if user_id in self.admins:
+            return await handler(event, data)
+
+        enabled = False
+        try:
+            enabled = settings.get_int("MAINTENANCE_ENABLED") == 1
+        except Exception:
+            enabled = False
+        if not enabled:
+            return await handler(event, data)
+
+        try:
+            exc = self._parse_ids(settings.get_str("MAINTENANCE_EXCEPT_IDS"))
+        except Exception:
+            exc = set()
+        if user_id in exc:
+            return await handler(event, data)
+
+        try:
+            text = settings.get_str("MAINTENANCE_TEXT")
+        except Exception:
+            text = self.DEFAULT_TEXT
+
+        if isinstance(event, CallbackQuery):
+            try:
+                await event.answer("🛠 Техработы", show_alert=True)
+            except Exception:
+                pass
+            if event.message:
+                try:
+                    await event.message.answer(text)
+                except Exception:
+                    pass
+            return
+
+        if isinstance(event, Message):
+            try:
+                await event.answer(text)
+            except Exception:
+                pass
+            return
+
+        return
 
 
 class LastSeenMiddleware(BaseMiddleware):

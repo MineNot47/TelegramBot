@@ -448,6 +448,15 @@ def _dice_menu_kb() -> InlineKeyboardMarkup:
     return kb.as_markup()
 
 
+@router.callback_query(F.data == "dice:roll")
+async def dice_roll_compat(callback: CallbackQuery) -> None:
+    # Совместимость со старыми кнопками (если у пользователей остались старые сообщения).
+    if not callback.message:
+        return
+    await callback.answer()
+    await callback.message.answer("🎲 Используйте меню кости ниже 👇", reply_markup=_dice_menu_kb())
+
+
 @router.callback_query(F.data == "dice:menu")
 async def dice_menu(callback: CallbackQuery, db: Database, settings: SettingsStore) -> None:
     if not callback.from_user or not callback.message:
@@ -568,7 +577,7 @@ async def dice_pay(callback: CallbackQuery, bot: Bot, db: Database, settings: Se
         description=(
             f"Стоимость: {cost_xtr} ⭐ (Stars).\n"
             f"При 6 — приз +{win6:.2f} на баланс.\n\n"
-            "⚠️ Оплата Stars и покупка броска — <b>невозвратные</b>."
+            "⚠️ Оплата Stars и покупка броска — НЕВОЗВРАТНЫЕ."
         ),
         payload=payload,
         provider_token="",

@@ -81,6 +81,7 @@ def admin_menu() -> ReplyKeyboardMarkup:
     kb.row(KeyboardButton(text="📢 Рассылка"), KeyboardButton(text="🎁 Промокоды"))
     kb.row(KeyboardButton(text="👥 Пользователи"), KeyboardButton(text="🚫 Баны"))
     kb.row(KeyboardButton(text="🧊 Заморозка"), KeyboardButton(text="📝 Правила"))
+    kb.row(KeyboardButton(text="🛠 Техработы"))
     kb.row(KeyboardButton(text="📺 Спонсоры"), KeyboardButton(text="📋 Задания"))
     kb.row(KeyboardButton(text="⚙️ Настройки"))
     kb.row(KeyboardButton(text="⬅️ Назад"))

@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import datetime as dt
+import logging
 
 from aiogram import Bot, F, Router
 from aiogram.types import CallbackQuery
@@ -11,6 +12,7 @@ from keyboards import wd_confirm_kb
 from utils import fmt_user
 
 router = Router()
+logger = logging.getLogger(__name__)
 
 # Стоимость вариантов вывода в "балансе" бота.
 # При желании можно поменять на свои значения.
@@ -64,12 +66,23 @@ async def wd_new(callback: CallbackQuery, bot: Bot, db: Database) -> None:
     try:
         wd_id = await db.create_withdrawal(user.user_id, user.username, title, amount)
     except ValueError:
-        await callback.answer("Недостаточно баланса.", show_alert=True)
-        await callback.message.answer(
-            "❌ <b>Недостаточно баланса</b>\n"
-            f"Ваш баланс: <b>{user.balance:.2f}</b>\n"
-            f"Нужно: <b>{amount:.2f}</b>"
+        # Показываем "окошко" (alert) сразу, чтобы не было ощущения, что бот молчит.
+        await callback.answer(
+            f"❌ Недостаточно средств.\nБаланс: {user.balance:.2f}\nНужно: {amount:.2f}",
+            show_alert=True,
         )
+        try:
+            await callback.message.answer(
+                "❌ <b>Недостаточно баланса</b>\n"
+                f"Ваш баланс: <b>{user.balance:.2f}</b>\n"
+                f"Нужно: <b>{amount:.2f}</b>"
+            )
+        except Exception:
+            pass
+        return
+    except Exception:
+        logger.exception("wd_new failed")
+        await callback.answer("❌ Ошибка. Попробуйте позже.", show_alert=True)
         return
 
     await callback.answer("✅ Заявка создана!")

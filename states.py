@@ -49,3 +49,9 @@ class RulesEditState(StatesGroup):
 
 class DonateState(StatesGroup):
     waiting_amount = State()
+
+
+class MaintenanceState(StatesGroup):
+    waiting_user_add = State()
+    waiting_user_remove = State()
+    waiting_text = State()
