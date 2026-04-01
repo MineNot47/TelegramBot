@@ -1,16 +1,20 @@
 from __future__ import annotations
 
 import time
+import io
+import json
 
 from aiogram import Bot, F, Router
 from aiogram.fsm.context import FSMContext
 from aiogram.types import CallbackQuery, Message
 from aiogram.types import InlineKeyboardButton, InlineKeyboardMarkup
+from aiogram.types import BufferedInputFile
 
 from config import ADMINS
 from db import Database
 from keyboards import admin_menu, admin_simple_actions_kb, main_menu
 from settings_store import SettingsStore
+from flyer_client import FlyerClient
 from states import (
     BanState,
     BroadcastState,
@@ -106,6 +110,24 @@ async def admin_stats(message: Message, db: Database) -> None:
         f"📩 Заявок (всего): <b>{all_wd}</b>\n"
         f"⏳ В ожидании: <b>{pending}</b>"
     )
+
+
+@router.message(F.text == "🧪 Flyer Debug")
+async def flyer_debug(message: Message, flyer: FlyerClient | None) -> None:
+    if not _admin_only(message):
+        return
+    if flyer is None:
+        await message.answer("FlyerAPI не подключён (нет ключа/ошибка инициализации).")
+        return
+    uid = message.from_user.id if message.from_user else 0
+    tasks = await flyer.get_tasks(user_id=uid, language_code=message.from_user.language_code if message.from_user else "ru", limit=3)
+    dump = json.dumps(tasks, ensure_ascii=False, indent=2)
+    if len(dump) <= 3500:
+        await message.answer("🧪 <b>Flyer get_tasks (пример)</b>\n\n<pre>" + dump + "</pre>")
+        return
+    bio = io.BytesIO(dump.encode("utf-8"))
+    f = BufferedInputFile(bio.getvalue(), filename="flyer_tasks_sample.json")
+    await message.answer_document(f, caption="🧪 Flyer get_tasks (пример)")
 
 
 # ---- Рассылка ----
