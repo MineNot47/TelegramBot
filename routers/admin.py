@@ -843,6 +843,8 @@ async def settings_menu(message: Message, settings: SettingsStore) -> None:
             ("FLYER_UNK", "admin:set:FLYER_REWARD_UNKNOWN"),
             ("DICE_COST", "admin:set:DICE_ROLL_COST"),
             ("DICE_WIN6", "admin:set:DICE_WIN_ON_6"),
+            ("DICE_XTR$", "admin:set:DICE_ROLL_COST_XTR"),
+            ("DICE_XTR6", "admin:set:DICE_WIN_ON_6_XTR"),
         ],
         columns=2,
     )
@@ -860,6 +862,9 @@ async def settings_menu(message: Message, settings: SettingsStore) -> None:
         "🎲 Кость:\n"
         f"• COST: <b>{settings.get_float('DICE_ROLL_COST'):.2f}</b>\n"
         f"• WIN6: <b>{settings.get_float('DICE_WIN_ON_6'):.2f}</b>\n\n"
+        "✨ Кость за Stars:\n"
+        f"• COST_XTR: <b>{settings.get_float('DICE_ROLL_COST_XTR'):.2f}</b>\n"
+        f"• WIN6_XTR: <b>{settings.get_float('DICE_WIN_ON_6_XTR'):.2f}</b>\n\n"
         "Выберите, что изменить:",
         reply_markup=kb,
     )

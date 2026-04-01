@@ -40,6 +40,7 @@ DEFAULT_SETTINGS = {
     "DICE_ROLL_COST": 2.0,  # цена за 1 бросок (для админов бесплатно)
     "DICE_WIN_ON_6": 4.0,  # награда при выпадении 6
     "DICE_ROLL_COST_XTR": 2.0,  # цена за 1 бросок в Telegram Stars (XTR)
+    "DICE_WIN_ON_6_XTR": 4.0,  # награда при 6 для броска за Stars
 }
 
 # Если api.telegram.org недоступен (VPN/блокировки) — укажите прокси:

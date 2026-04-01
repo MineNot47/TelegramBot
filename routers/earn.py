@@ -441,8 +441,50 @@ async def tasks_menu(callback: CallbackQuery, bot: Bot, db: Database, flyer: Fly
     await _send_task_card(callback.message, user_id=callback.from_user.id, key=cards[0].key, bot=bot, db=db, flyer=flyer)
 
 
-@router.callback_query(F.data == "dice:roll")
-async def dice_roll(callback: CallbackQuery, bot: Bot, db: Database, settings: SettingsStore) -> None:
+def _dice_menu_kb() -> InlineKeyboardMarkup:
+    kb = InlineKeyboardBuilder()
+    kb.row(InlineKeyboardButton(text="💰 Бросить за баланс", callback_data="dice:roll_balance"))
+    kb.row(InlineKeyboardButton(text="✨ Бросить за Stars", callback_data="dice:pay"))
+    return kb.as_markup()
+
+
+@router.callback_query(F.data == "dice:menu")
+async def dice_menu(callback: CallbackQuery, db: Database, settings: SettingsStore) -> None:
+    if not callback.from_user or not callback.message:
+        return
+    user = await db.get_user(callback.from_user.id)
+    if not user:
+        await callback.answer("Нажмите /start", show_alert=True)
+        return
+    if await db.is_balance_frozen(user.user_id):
+        await callback.answer("🧊 Баланс заморожен.", show_alert=True)
+        return
+    await callback.answer()
+
+    is_admin = callback.from_user.id in config.ADMINS
+    cost_bal = settings.get_float("DICE_ROLL_COST")
+    win_bal = settings.get_float("DICE_WIN_ON_6")
+    cost_xtr = int(settings.get_float("DICE_ROLL_COST_XTR"))
+    win_xtr = settings.get_float("DICE_WIN_ON_6_XTR")
+
+    lines = [
+        "🎲 <b>Игральная кость</b>\n",
+        "Выберите, как купить бросок:",
+        "",
+        f"💰 За баланс: цена <b>{cost_bal:.2f}</b>, приз за 6: <b>+{win_bal:.2f}</b>",
+        f"✨ За Stars: цена <b>{cost_xtr}</b> ⭐, приз за 6: <b>+{win_xtr:.2f}</b>",
+        "",
+        "⚠️ <b>Важно:</b> покупка броска <b>невозвратная</b>.",
+    ]
+    if is_admin:
+        lines.append("")
+        lines.append("👑 Для админов бросок за баланс бесплатный.")
+
+    await callback.message.answer("\n".join(lines), reply_markup=_dice_menu_kb())
+
+
+@router.callback_query(F.data == "dice:roll_balance")
+async def dice_roll_balance(callback: CallbackQuery, bot: Bot, db: Database, settings: SettingsStore) -> None:
     if not callback.from_user or not callback.message:
         return
     user = await db.get_user(callback.from_user.id)
@@ -466,24 +508,21 @@ async def dice_roll(callback: CallbackQuery, bot: Bot, db: Database, settings: S
             )
             return
 
-    warn = ""
-    if not is_admin:
-        warn = (
-            "\n\n⚠️ <b>Внимание:</b> стоимость броска списывается сразу и <b>не возвращается</b>.\n"
-            "Нажимая кнопку, вы подтверждаете покупку броска."
-        )
     await callback.answer("🎲 Бросаем...")
     dice_msg = await bot.send_dice(chat_id=callback.message.chat.id, emoji=DiceEmoji.DICE)
     value = int(dice_msg.dice.value) if dice_msg.dice else 0
-
     if value == 6:
         await db.change_balance(user.user_id, win6)
-        await callback.message.answer(f"🎉 Выпало <b>6</b>!\n💰 Начислено: <b>+{win6:.2f}</b>{warn}")
+        await callback.message.answer(
+            f"🎉 Выпало <b>6</b>!\n💰 Начислено: <b>+{win6:.2f}</b>",
+            reply_markup=_dice_menu_kb(),
+        )
     else:
-        if is_admin:
-            await callback.message.answer(f"🎲 Выпало: <b>{value}</b>\nДля админов бросок бесплатный.")
-        else:
-            await callback.message.answer(f"🎲 Выпало: <b>{value}</b>\nСписано за бросок: <b>-{cost:.2f}</b>{warn}")
+        spent_line = "Для админов бесплатно." if is_admin else f"Списано: <b>-{cost:.2f}</b>"
+        await callback.message.answer(
+            f"🎲 Выпало: <b>{value}</b>\n{spent_line}",
+            reply_markup=_dice_menu_kb(),
+        )
 
 
 @router.callback_query(F.data == "dice:pay")
@@ -505,7 +544,7 @@ async def dice_pay(callback: CallbackQuery, bot: Bot, db: Database, settings: Se
     is_admin = callback.from_user.id in config.ADMINS
     if is_admin:
         # админам проще и бесплатнее через обычную кнопку
-        await callback.answer("Для админов бросок бесплатный через 🎲", show_alert=True)
+        await callback.answer("Для админов используйте бросок за баланс (бесплатно).", show_alert=True)
         return
 
     cost_xtr_f = settings.get_float("DICE_ROLL_COST_XTR")
@@ -513,7 +552,7 @@ async def dice_pay(callback: CallbackQuery, bot: Bot, db: Database, settings: Se
     if cost_xtr <= 0:
         await callback.answer("Покупка броска временно отключена.", show_alert=True)
         return
-    win6 = settings.get_float("DICE_WIN_ON_6")
+    win6 = settings.get_float("DICE_WIN_ON_6_XTR")
 
     try:
         from aiogram.types import LabeledPrice
@@ -573,14 +612,17 @@ async def dice_success_payment(message: Message, bot: Bot, db: Database, setting
         await message.answer("🧊 Баланс заморожен. Бросок отменён.")
         return
 
-    win6 = settings.get_float("DICE_WIN_ON_6")
+    win6 = settings.get_float("DICE_WIN_ON_6_XTR")
     dice_msg = await bot.send_dice(chat_id=message.chat.id, emoji=DiceEmoji.DICE)
     value = int(dice_msg.dice.value) if dice_msg.dice else 0
     if value == 6:
         await db.change_balance(uid, win6)
-        await message.answer(f"🎉 Выпало <b>6</b>!\n💰 Начислено: <b>+{win6:.2f}</b>")
+        await message.answer(
+            f"🎉 Выпало <b>6</b>!\n💰 Начислено: <b>+{win6:.2f}</b>",
+            reply_markup=_dice_menu_kb(),
+        )
     else:
-        await message.answer(f"🎲 Выпало: <b>{value}</b>\nСпасибо за поддержку ⭐")
+        await message.answer(f"🎲 Выпало: <b>{value}</b>\nСпасибо за поддержку ⭐", reply_markup=_dice_menu_kb())
 
 async def _send_task_card(
     message: Message,

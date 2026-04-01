@@ -511,6 +511,10 @@ async def donate_success(message: Message, bot: Bot) -> None:
         return
     if sp.currency != "XTR":
         return
+    # Чтобы не мешать другим оплатам (например, мини-играм), обрабатываем только payload доната.
+    payload = sp.invoice_payload or ""
+    if not payload.startswith("donate:"):
+        return
     stars = int(sp.total_amount)
     await message.answer(f"💖 Спасибо за донат!\n⭐ Получено: <b>{stars}</b>")
     # Уведомим админов (по желанию)

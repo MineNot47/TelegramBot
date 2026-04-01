@@ -37,7 +37,7 @@ def earn_menu() -> InlineKeyboardMarkup:
 def tasks_entry_kb() -> InlineKeyboardMarkup:
     kb = InlineKeyboardBuilder()
     kb.button(text="📋 Показать задания", callback_data="tasks:menu")
-    kb.button(text="🎲 Игральная кость", callback_data="dice:roll")
+    kb.button(text="🎲 Игральная кость", callback_data="dice:menu")
     kb.adjust(1)
     return kb.as_markup()
 
