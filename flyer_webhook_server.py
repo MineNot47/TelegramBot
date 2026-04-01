@@ -61,7 +61,10 @@ async def _handle_event(
         if not await db.is_flyer_task_done(user_id_int, signature_str):
             reward = await db.get_flyer_task_reward(signature_str)
             if reward is None:
-                reward = settings.get_float("FLYER_REWARD_UNKNOWN")
+                try:
+                    reward = settings.get_float("FLYER_REWARD_UNKNOWN")
+                except Exception:
+                    reward = 1.0
             await db.mark_flyer_task_done(user_id_int, signature_str)
             await db.change_balance(user_id_int, reward)
             logger.info("Flyer webhook: credited user_id=%s signature=%s reward=%.2f", user_id_int, signature_str, reward)
@@ -109,8 +112,13 @@ def create_app(
         if not isinstance(payload, dict):
             return web.json_response({"status": False}, status=400)
 
-        await _handle_event(payload, db=db, settings=settings, bot=bot)
-        return web.json_response({"status": True})
+        try:
+            await _handle_event(payload, db=db, settings=settings, bot=bot)
+            return web.json_response({"status": True})
+        except Exception:
+            logger.exception("Flyer webhook: handler error")
+            # Возвращаем 200, чтобы запрос не падал 500, но статус=False покажет, что обработка не прошла.
+            return web.json_response({"status": False})
 
     # Секрет прячем в URL, чтобы случайные запросы не долбили endpoint.
     app.router.add_post(f"/flyer/webhook/{secret}", handle)

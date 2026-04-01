@@ -630,12 +630,15 @@ class Database:
         )
 
     async def get_flyer_task_reward(self, signature: str) -> float | None:
-        row = await self.fetchone("SELECT reward FROM flyer_task_meta WHERE signature=?", (str(signature).strip(),))
-        if not row:
+        try:
+            row = await self.fetchone("SELECT reward FROM flyer_task_meta WHERE signature=?", (str(signature).strip(),))
+            if not row:
+                return None
+            if row["reward"] is None:
+                return None
+            return float(row["reward"])
+        except Exception:
             return None
-        if row["reward"] is None:
-            return None
-        return float(row["reward"])
 
     # ---- gifts ----
     async def get_last_gift_at(self, user_id: int) -> int | None:
