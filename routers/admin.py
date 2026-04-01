@@ -630,6 +630,7 @@ async def channels_add_del_start(callback: CallbackQuery, state: FSMContext) -> 
         "Отправьте <b>ID</b> (например: <code>-100123...</code>) или <b>@username</b>.\n"
         "Для спонсоров можно отправить ссылку <code>https://...</code> (без проверки).\n"
         "Без проверки канала: начните с <code>!</code> (пример: <code>!@mychannel</code>).\n"
+        "🤖 Ботов можно добавлять только <b>без проверки</b> (как ссылку или как задание без проверки).\n"
         "Удалить ссылку: <code>link:ID</code>.\n"
         "Отмена: /cancel"
     )
@@ -704,8 +705,9 @@ async def channels_add_del_apply(
         try:
             chat = await bot.get_chat(raw)
             chat_id = int(chat.id)
-            title = chat.title
+            title = getattr(chat, "title", None) or getattr(chat, "first_name", None)
             username = chat.username or username
+            chat_type = str(getattr(chat, "type", "") or "")
         except Exception:
             await message.answer("❌ Не удалось найти чат. Проверьте @username.")
             return
@@ -716,12 +718,16 @@ async def channels_add_del_apply(
             return
         try:
             chat = await bot.get_chat(chat_id)
-            title = chat.title
+            title = getattr(chat, "title", None) or getattr(chat, "first_name", None)
             username = chat.username
+            chat_type = str(getattr(chat, "type", "") or "")
         except Exception:
             title = None
+            chat_type = ""
 
     if action == "add":
+        # Если добавляют "приватный" чат (это пользователь/бот), проверка подписки невозможна.
+        is_private = chat_type == "private"
         if kind == "sponsors":
             url = f"https://t.me/{username}" if username else None
             if (forced_url is None) and (url is None):
@@ -731,6 +737,14 @@ async def channels_add_del_apply(
                     "<code>https://t.me/+xxxx -1001234567890</code>\n\n"
                     "Или добавьте @username, чтобы ссылка собралась автоматически."
                 )
+                return
+            if is_private:
+                link_id = await db.add_sponsor_link(forced_url or url, title=(f"🤖 @{username}" if username else title), check_required=False)
+                await message.answer(
+                    "✅ Добавлено как ссылка (без проверки), т.к. это бот/пользователь.\n"
+                    f"Удаление: <code>link:{link_id}</code>"
+                )
+                await state.clear()
                 return
             await db.add_sponsor_channel(
                 chat_id,
@@ -758,7 +772,7 @@ async def channels_add_del_apply(
                 username=username,
                 url=url,
                 reward=float(reward),
-                check_required=not no_check,
+                check_required=(False if is_private else (not no_check)),
             )
         await message.answer("✅ Добавлено.")
     else:
