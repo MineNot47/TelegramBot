@@ -81,6 +81,13 @@ class FlyerClient:
             return bool(await self._flyer.check(user_id, language_code=language_code))
         return bool(await self._flyer.check(user_id, language_code=language_code, message=message))
 
+    async def get_tasks_raw(self, user_id: int, language_code: str | None, limit: int = 5) -> Any:
+        """
+        Возвращает "сырой" ответ flyerapi.get_tasks без фильтрации/парсинга.
+        Удобно для диагностики, потому что структура может меняться.
+        """
+        return await self._flyer.get_tasks(user_id=user_id, language_code=language_code, limit=limit)
+
     async def get_tasks(self, user_id: int, language_code: str | None, limit: int = 5) -> list[FlyerTask]:
         tasks = await self._flyer.get_tasks(user_id=user_id, language_code=language_code, limit=limit)
         out: list[FlyerTask] = []

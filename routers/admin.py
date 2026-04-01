@@ -120,8 +120,17 @@ async def flyer_debug(message: Message, flyer: FlyerClient | None) -> None:
         await message.answer("FlyerAPI не подключён (нет ключа/ошибка инициализации).")
         return
     uid = message.from_user.id if message.from_user else 0
-    tasks = await flyer.get_tasks(user_id=uid, language_code=message.from_user.language_code if message.from_user else "ru", limit=3)
-    dump = json.dumps(tasks, ensure_ascii=False, indent=2)
+    lang = message.from_user.language_code if message.from_user else "ru"
+    raw = await flyer.get_tasks_raw(user_id=uid, language_code=lang, limit=3)
+    parsed = await flyer.get_tasks(user_id=uid, language_code=lang, limit=3)
+    payload = {
+        "user_id": uid,
+        "language_code": lang,
+        "raw_count": (len(raw) if isinstance(raw, list) else None),
+        "parsed_count": len(parsed),
+        "raw": raw,
+    }
+    dump = json.dumps(payload, ensure_ascii=False, indent=2)
     if len(dump) <= 3500:
         await message.answer("🧪 <b>Flyer get_tasks (пример)</b>\n\n<pre>" + dump + "</pre>")
         return
