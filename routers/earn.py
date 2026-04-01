@@ -73,6 +73,17 @@ def _flyer_difficulty(raw: dict) -> str | None:
             return "hard"
         if "subscribe" in s or s in {"sub", "subscription"}:
             return "easy"
+
+    # Если явной сложности нет — пытаемся вывести её из "действия".
+    action = _flyer_action_ru(raw)
+    if action:
+        al = action.lower()
+        if any(x in al for x in ("буст", "голос", "boost", "vote")):
+            return "hard"
+        if any(x in al for x in ("подпис", "subscribe")):
+            return "easy"
+        if any(x in al for x in ("просмотр", "view", "watch")):
+            return "easy"
     return None
 
 
@@ -724,21 +735,28 @@ async def _send_task_card(
             if action:
                 action_line = f"🧩 Действие: <b>{action}</b>\n\n"
 
-    # Для Flyer-заданий делаем "Подписаться" через callback, чтобы отдать пользователю
+    # Для Flyer-заданий делаем "Открыть" через callback, чтобы отдать пользователю
     # запасную ссылку/кнопки (некоторые задачи приходят со странными URL).
     if key.startswith("f:"):
         kb = InlineKeyboardBuilder()
-        kb.row(InlineKeyboardButton(text="📺 Подписаться", callback_data=f"task:go:{card.key}"))
+        kb.row(InlineKeyboardButton(text="🔗 Открыть", callback_data=f"task:go:{card.key}"))
         kb.row(InlineKeyboardButton(text="✅ Проверить", callback_data=f"task:check:{card.key}"))
         kb.row(InlineKeyboardButton(text="⏭ Пропустить", callback_data=f"task:skip:{card.key}"))
         reply_markup = kb.as_markup()
     else:
         reply_markup = _task_card_kb(link=card.link, check_cb=f"task:check:{card.key}", skip_cb=f"task:skip:{card.key}")
-    await message.answer(
+
+    hint = "Нажмите «Подписаться», затем «Проверить»."
+    if key.startswith("f:"):
+        hint = "Нажмите «Открыть», затем «Проверить»."
+    text = (
         f"📌 <b>{card.title}</b>\n\n"
         f"{action_line}"
         f"Выполняйте это задание и получите <b>{card.reward:.2f}</b> звезд.\n"
-        "Нажмите «Подписаться», затем «Проверить».",
+        f"{hint}"
+    )
+    await message.answer(
+        text,
         reply_markup=reply_markup,
     )
 
