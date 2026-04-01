@@ -466,18 +466,121 @@ async def dice_roll(callback: CallbackQuery, bot: Bot, db: Database, settings: S
             )
             return
 
+    warn = ""
+    if not is_admin:
+        warn = (
+            "\n\n⚠️ <b>Внимание:</b> стоимость броска списывается сразу и <b>не возвращается</b>.\n"
+            "Нажимая кнопку, вы подтверждаете покупку броска."
+        )
     await callback.answer("🎲 Бросаем...")
     dice_msg = await bot.send_dice(chat_id=callback.message.chat.id, emoji=DiceEmoji.DICE)
     value = int(dice_msg.dice.value) if dice_msg.dice else 0
 
     if value == 6:
         await db.change_balance(user.user_id, win6)
-        await callback.message.answer(f"🎉 Выпало <b>6</b>!\n💰 Начислено: <b>+{win6:.2f}</b>")
+        await callback.message.answer(f"🎉 Выпало <b>6</b>!\n💰 Начислено: <b>+{win6:.2f}</b>{warn}")
     else:
         if is_admin:
             await callback.message.answer(f"🎲 Выпало: <b>{value}</b>\nДля админов бросок бесплатный.")
         else:
-            await callback.message.answer(f"🎲 Выпало: <b>{value}</b>\nСписано за бросок: <b>-{cost:.2f}</b>")
+            await callback.message.answer(f"🎲 Выпало: <b>{value}</b>\nСписано за бросок: <b>-{cost:.2f}</b>{warn}")
+
+
+@router.callback_query(F.data == "dice:pay")
+async def dice_pay(callback: CallbackQuery, bot: Bot, db: Database, settings: SettingsStore) -> None:
+    """
+    Покупка броска за Telegram Stars (XTR) через инвойс.
+    Важно: выигрыш начисляется в баланс бота (не в Stars).
+    """
+    if not callback.from_user or not callback.message:
+        return
+    user = await db.get_user(callback.from_user.id)
+    if not user:
+        await callback.answer("Нажмите /start", show_alert=True)
+        return
+    if await db.is_balance_frozen(user.user_id):
+        await callback.answer("🧊 Баланс заморожен.", show_alert=True)
+        return
+
+    is_admin = callback.from_user.id in config.ADMINS
+    if is_admin:
+        # админам проще и бесплатнее через обычную кнопку
+        await callback.answer("Для админов бросок бесплатный через 🎲", show_alert=True)
+        return
+
+    cost_xtr_f = settings.get_float("DICE_ROLL_COST_XTR")
+    cost_xtr = int(cost_xtr_f)
+    if cost_xtr <= 0:
+        await callback.answer("Покупка броска временно отключена.", show_alert=True)
+        return
+    win6 = settings.get_float("DICE_WIN_ON_6")
+
+    try:
+        from aiogram.types import LabeledPrice
+    except Exception:
+        await callback.answer("Ошибка оплаты. Обновите aiogram.", show_alert=True)
+        return
+
+    payload = f"dicepay:{callback.from_user.id}:{cost_xtr}:{int(time.time())}"
+    await callback.answer()
+    await bot.send_invoice(
+        chat_id=callback.message.chat.id,
+        title="🎲 Бросок кости",
+        description=(
+            f"Стоимость: {cost_xtr} ⭐ (Stars).\n"
+            f"При 6 — приз +{win6:.2f} на баланс.\n\n"
+            "⚠️ Оплата Stars и покупка броска — <b>невозвратные</b>."
+        ),
+        payload=payload,
+        provider_token="",
+        currency="XTR",
+        prices=[LabeledPrice(label=f"Бросок кости ({cost_xtr} ⭐)", amount=int(cost_xtr))],
+    )
+
+
+@router.message(F.successful_payment)
+async def dice_success_payment(message: Message, bot: Bot, db: Database, settings: SettingsStore) -> None:
+    """
+    Если оплатили бросок кости за Stars (XTR) — выполняем бросок.
+    """
+    if not message.from_user or not message.successful_payment:
+        return
+    sp = message.successful_payment
+    if sp.currency != "XTR":
+        return
+    payload = sp.invoice_payload or ""
+    if not payload.startswith("dicepay:"):
+        return
+    parts = payload.split(":")
+    if len(parts) < 4:
+        return
+    try:
+        uid = int(parts[1])
+        expected = int(parts[2])
+    except Exception:
+        return
+    if uid != message.from_user.id:
+        return
+    if int(sp.total_amount) != int(expected):
+        # если сумма не совпала — не выполняем бросок
+        await message.answer("⚠️ Платёж получен, но сумма не совпала. Обратитесь в поддержку.")
+        return
+
+    user = await db.get_user(uid)
+    if not user:
+        await db.upsert_user(uid, username=message.from_user.username if message.from_user else None, referrer_id=None)
+    if await db.is_balance_frozen(uid):
+        await message.answer("🧊 Баланс заморожен. Бросок отменён.")
+        return
+
+    win6 = settings.get_float("DICE_WIN_ON_6")
+    dice_msg = await bot.send_dice(chat_id=message.chat.id, emoji=DiceEmoji.DICE)
+    value = int(dice_msg.dice.value) if dice_msg.dice else 0
+    if value == 6:
+        await db.change_balance(uid, win6)
+        await message.answer(f"🎉 Выпало <b>6</b>!\n💰 Начислено: <b>+{win6:.2f}</b>")
+    else:
+        await message.answer(f"🎲 Выпало: <b>{value}</b>\nСпасибо за поддержку ⭐")
 
 async def _send_task_card(
     message: Message,
