@@ -8,6 +8,7 @@ from aiogram import Bot, F, Router
 from aiogram.fsm.context import FSMContext
 from aiogram.types import CallbackQuery, InlineKeyboardButton, InlineKeyboardMarkup, Message
 from aiogram.utils.keyboard import InlineKeyboardBuilder
+from aiogram.enums import DiceEmoji
 
 import config
 from db import Database
@@ -23,6 +24,8 @@ _FLYER_CACHE: dict[int, tuple[float, list[str], dict[str, FlyerTask]]] = {}
 _LOCAL_CACHE: dict[int, tuple[float, list[int]]] = {}
 _TASK_CACHE: dict[int, tuple[float, list[str], dict[str, "_TaskCard"]]] = {}
 _CACHE_TTL = 10 * 60
+# Кулдаун Flyer, если сервис вернул пустой список.
+_FLYER_NEXT_ALLOWED_AT: dict[int, float] = {}
 
 
 @dataclass(frozen=True)
@@ -369,20 +372,24 @@ async def tasks_menu(callback: CallbackQuery, bot: Bot, db: Database, flyer: Fly
 
     cards: list[_TaskCard] = []
 
-    # Локальные задания (добавленные админом).
+    # Локальные задания (добавленные админом) — показываем только невыполненные.
     rows = await db.list_task_channels_full()
     for r in (rows or [])[:30]:
         chat_id = int(r["chat_id"])
+        if await db.is_task_done(callback.from_user.id, chat_id):
+            continue
         username = (r["username"] or "").strip()
         title = (r["title"] or "").strip() or (("@" + username) if username else str(chat_id))
         link = (r["url"] or "").strip() or (f"https://t.me/{username}" if username else None)
         reward = float(r["reward"]) if r["reward"] is not None else settings.get_float("TASK_REWARD")
         cards.append(_TaskCard(key=f"l:{chat_id}", title=title, link=link, reward=reward))
 
-    # Локальные задания-ссылки (без проверки).
+    # Локальные задания-ссылки (без проверки) — только невыполненные.
     link_rows = await db.list_task_links()
     for l in (link_rows or [])[:30]:
         link_id = int(l["id"])
+        if await db.is_task_link_done(callback.from_user.id, link_id):
+            continue
         url = (l["url"] or "").strip()
         title = (l["title"] or "").strip() if (l["title"] is not None) else ""
         reward = float(l["reward"]) if l["reward"] is not None else settings.get_float("TASK_REWARD")
@@ -390,11 +397,17 @@ async def tasks_menu(callback: CallbackQuery, bot: Bot, db: Database, flyer: Fly
 
     # Задания Flyer (если ключ задан).
     if flyer is not None:
-        flyer_tasks = await flyer.get_tasks(
-            user_id=callback.from_user.id,
-            language_code=callback.from_user.language_code,
-            limit=config.FLYER_TASKS_LIMIT,
-        )
+        now = time.time()
+        next_allowed = _FLYER_NEXT_ALLOWED_AT.get(callback.from_user.id, 0.0)
+        flyer_tasks: list[FlyerTask] = []
+        if now >= next_allowed:
+            flyer_tasks = await flyer.get_tasks(
+                user_id=callback.from_user.id,
+                language_code=callback.from_user.language_code,
+                limit=config.FLYER_TASKS_LIMIT,
+            )
+            if not flyer_tasks:
+                _FLYER_NEXT_ALLOWED_AT[callback.from_user.id] = now + float(config.FLYER_TASKS_COOLDOWN_SECONDS)
         if flyer_tasks:
             _cache_flyer_set(callback.from_user.id, flyer_tasks)
             for t in flyer_tasks:
@@ -404,13 +417,67 @@ async def tasks_menu(callback: CallbackQuery, bot: Bot, db: Database, flyer: Fly
                 await db.upsert_flyer_task_meta(signature=t.signature, reward=reward, title=title, link=t.link)
 
     if not cards:
-        await callback.message.answer("📋 Заданий пока нет. Загляните позже.")
+        # Если Flyer включен и мы в кулдауне — покажем остаток.
+        msg = "📋 Заданий пока нет. Загляните позже."
+        if flyer is not None:
+            now = time.time()
+            next_allowed = _FLYER_NEXT_ALLOWED_AT.get(callback.from_user.id, 0.0)
+            if next_allowed > now:
+                left = int(next_allowed - now)
+                mins = max(1, (left + 59) // 60)
+                kb = InlineKeyboardBuilder()
+                kb.button(text="🔄 Обновить", callback_data="tasks:menu")
+                kb.adjust(1)
+                await callback.message.answer(
+                    f"⏳ Задания обновляются.\nПопробуйте через <b>{mins}</b> мин.",
+                    reply_markup=kb.as_markup(),
+                )
+                return
+        await callback.message.answer(msg)
         return
 
     _cache_task_set(callback.from_user.id, cards)
     await callback.message.answer("📋 <b>Задания</b>")
     await _send_task_card(callback.message, user_id=callback.from_user.id, key=cards[0].key, bot=bot, db=db, flyer=flyer)
 
+
+@router.callback_query(F.data == "dice:roll")
+async def dice_roll(callback: CallbackQuery, bot: Bot, db: Database, settings: SettingsStore) -> None:
+    if not callback.from_user or not callback.message:
+        return
+    user = await db.get_user(callback.from_user.id)
+    if not user:
+        await callback.answer("Нажмите /start", show_alert=True)
+        return
+    if await db.is_balance_frozen(user.user_id):
+        await callback.answer("🧊 Баланс заморожен.", show_alert=True)
+        return
+
+    is_admin = callback.from_user.id in config.ADMINS
+    cost = settings.get_float("DICE_ROLL_COST")
+    win6 = settings.get_float("DICE_WIN_ON_6")
+
+    if not is_admin:
+        ok = await db.spend_balance(user.user_id, cost)
+        if not ok:
+            await callback.answer(
+                f"❌ Недостаточно средств.\nБаланс: {user.balance:.2f}\nНужно: {cost:.2f}",
+                show_alert=True,
+            )
+            return
+
+    await callback.answer("🎲 Бросаем...")
+    dice_msg = await bot.send_dice(chat_id=callback.message.chat.id, emoji=DiceEmoji.DICE)
+    value = int(dice_msg.dice.value) if dice_msg.dice else 0
+
+    if value == 6:
+        await db.change_balance(user.user_id, win6)
+        await callback.message.answer(f"🎉 Выпало <b>6</b>!\n💰 Начислено: <b>+{win6:.2f}</b>")
+    else:
+        if is_admin:
+            await callback.message.answer(f"🎲 Выпало: <b>{value}</b>\nДля админов бросок бесплатный.")
+        else:
+            await callback.message.answer(f"🎲 Выпало: <b>{value}</b>\nСписано за бросок: <b>-{cost:.2f}</b>")
 
 async def _send_task_card(
     message: Message,

@@ -35,6 +35,10 @@ DEFAULT_SETTINGS = {
     "FLYER_REWARD_MEDIUM": 1.5,
     "FLYER_REWARD_HARD": 2.0,
     "FLYER_REWARD_UNKNOWN": 1.0,
+
+    # Мини-игра 🎲
+    "DICE_ROLL_COST": 2.0,  # цена за 1 бросок (для админов бесплатно)
+    "DICE_WIN_ON_6": 4.0,  # награда при выпадении 6
 }
 
 # Если api.telegram.org недоступен (VPN/блокировки) — укажите прокси:
@@ -92,6 +96,7 @@ DEBUG_LOG = os.getenv("DEBUG_LOG", "0") == "1"
 # FlyerAPI (задания/проверки через сервис). Ключ храните в переменной окружения.
 FLYER_API_KEY = os.getenv("FLYER_API_KEY")
 FLYER_TASKS_LIMIT = int(os.getenv("FLYER_TASKS_LIMIT", "5"))
+FLYER_TASKS_COOLDOWN_SECONDS = int(os.getenv("FLYER_TASKS_COOLDOWN_SECONDS", "3600"))
 
 # Вывод доступен только после N приглашённых рефералов.
 WITHDRAW_MIN_INVITES = int(os.getenv("WITHDRAW_MIN_INVITES", "2"))

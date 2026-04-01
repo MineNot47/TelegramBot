@@ -320,6 +320,30 @@ class Database:
             (float(delta), user_id),
         )
 
+    async def spend_balance(self, user_id: int, amount: float) -> bool:
+        """
+        Атомарно пытается списать amount с баланса. Возвращает True если списали.
+        """
+        amount_f = float(amount)
+        if amount_f <= 0:
+            return True
+        await self.conn.execute("BEGIN IMMEDIATE;")
+        try:
+            row = await self.fetchone("SELECT balance FROM users WHERE user_id=?", (int(user_id),))
+            bal = float(row["balance"] if row else 0.0)
+            if bal + 1e-9 < amount_f:
+                await self.conn.execute("ROLLBACK;")
+                return False
+            await self.conn.execute(
+                "UPDATE users SET balance = ROUND(balance - ?, 8) WHERE user_id=?",
+                (amount_f, int(user_id)),
+            )
+            await self.conn.commit()
+            return True
+        except Exception:
+            await self.conn.execute("ROLLBACK;")
+            raise
+
     async def set_balance(self, user_id: int, value: float) -> None:
         await self.execute("UPDATE users SET balance=? WHERE user_id=?", (float(value), user_id))
 

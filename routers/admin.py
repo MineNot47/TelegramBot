@@ -30,6 +30,16 @@ router = Router()
 router.message.filter(F.from_user.id.in_(ADMINS))
 router.callback_query.filter(F.from_user.id.in_(ADMINS))
 
+MAIN_MENU_TEXTS = {
+    "⭐ Личный кабинет",
+    "👥 Рефералы",
+    "💰 Заработать",
+    "🎁 Промокод",
+    "💸 Вывод",
+    "ℹ️ О боте",
+    "👑 Админ-панель",
+}
+
 
 def _admin_only(message: Message) -> bool:
     return bool(message.from_user and message.from_user.id in ADMINS)
@@ -831,6 +841,8 @@ async def settings_menu(message: Message, settings: SettingsStore) -> None:
             ("FLYER_MED", "admin:set:FLYER_REWARD_MEDIUM"),
             ("FLYER_HARD", "admin:set:FLYER_REWARD_HARD"),
             ("FLYER_UNK", "admin:set:FLYER_REWARD_UNKNOWN"),
+            ("DICE_COST", "admin:set:DICE_ROLL_COST"),
+            ("DICE_WIN6", "admin:set:DICE_WIN_ON_6"),
         ],
         columns=2,
     )
@@ -845,6 +857,9 @@ async def settings_menu(message: Message, settings: SettingsStore) -> None:
         f"• MEDIUM: <b>{settings.get_float('FLYER_REWARD_MEDIUM'):.2f}</b>\n"
         f"• HARD: <b>{settings.get_float('FLYER_REWARD_HARD'):.2f}</b>\n\n"
         f"• UNKNOWN: <b>{settings.get_float('FLYER_REWARD_UNKNOWN'):.2f}</b>\n\n"
+        "🎲 Кость:\n"
+        f"• COST: <b>{settings.get_float('DICE_ROLL_COST'):.2f}</b>\n"
+        f"• WIN6: <b>{settings.get_float('DICE_WIN_ON_6'):.2f}</b>\n\n"
         "Выберите, что изменить:",
         reply_markup=kb,
     )
@@ -913,7 +928,7 @@ async def setting_change_apply(message: Message, state: FSMContext, settings: Se
     await message.answer(f"✅ Сохранено: {key} = <b>{float(val):.2f}</b>")
 
 
-@router.message()
+@router.message(~F.text.in_(MAIN_MENU_TEXTS))
 async def admin_fallback(message: Message) -> None:
     # Чтобы обычные сообщения админов в панели не пропадали.
     if not _admin_only(message):
