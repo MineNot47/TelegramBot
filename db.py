@@ -96,6 +96,24 @@ class Database:
                 check_required INTEGER NOT NULL DEFAULT 1
             );
 
+            -- Задания-ссылки (без проверки) — как sponsor_links, но с наградой
+            CREATE TABLE IF NOT EXISTS task_links (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                title TEXT,
+                url TEXT NOT NULL,
+                reward REAL,
+                check_required INTEGER NOT NULL DEFAULT 0
+            );
+
+            CREATE TABLE IF NOT EXISTS task_link_completions (
+                user_id INTEGER NOT NULL,
+                link_id INTEGER NOT NULL,
+                done_at INTEGER NOT NULL,
+                PRIMARY KEY(user_id, link_id),
+                FOREIGN KEY(user_id) REFERENCES users(user_id) ON DELETE CASCADE,
+                FOREIGN KEY(link_id) REFERENCES task_links(id) ON DELETE CASCADE
+            );
+
             CREATE TABLE IF NOT EXISTS task_completions (
                 user_id  INTEGER NOT NULL,
                 chat_id  INTEGER NOT NULL,
@@ -502,6 +520,33 @@ class Database:
             "SELECT chat_id, title, username, url, reward, check_required FROM task_channels ORDER BY chat_id"
         )
 
+    async def add_task_link(
+        self,
+        url: str,
+        *,
+        title: str | None = None,
+        reward: float | None = None,
+        check_required: bool = False,
+    ) -> int:
+        cur = await self.conn.execute(
+            "INSERT INTO task_links(title, url, reward, check_required) VALUES(?, ?, ?, ?)",
+            (title, str(url).strip(), float(reward) if reward is not None else None, 1 if check_required else 0),
+        )
+        await self.conn.commit()
+        return int(cur.lastrowid)
+
+    async def remove_task_link(self, link_id: int) -> None:
+        await self.execute("DELETE FROM task_links WHERE id=?", (int(link_id),))
+
+    async def list_task_links(self) -> list[aiosqlite.Row]:
+        return await self.fetchall("SELECT id, title, url, reward, check_required FROM task_links ORDER BY id DESC")
+
+    async def get_task_link(self, link_id: int) -> aiosqlite.Row | None:
+        return await self.fetchone(
+            "SELECT id, title, url, reward, check_required FROM task_links WHERE id=?",
+            (int(link_id),),
+        )
+
     async def get_task_channel(self, chat_id: int) -> aiosqlite.Row | None:
         return await self.fetchone(
             "SELECT chat_id, title, username, url, reward, check_required FROM task_channels WHERE chat_id=?",
@@ -537,6 +582,19 @@ class Database:
         await self.execute(
             "INSERT OR REPLACE INTO task_completions(user_id, chat_id, done_at) VALUES(?, ?, ?)",
             (int(user_id), int(chat_id), int(time.time())),
+        )
+
+    async def is_task_link_done(self, user_id: int, link_id: int) -> bool:
+        row = await self.fetchone(
+            "SELECT 1 FROM task_link_completions WHERE user_id=? AND link_id=?",
+            (int(user_id), int(link_id)),
+        )
+        return bool(row)
+
+    async def mark_task_link_done(self, user_id: int, link_id: int) -> None:
+        await self.execute(
+            "INSERT OR REPLACE INTO task_link_completions(user_id, link_id, done_at) VALUES(?, ?, ?)",
+            (int(user_id), int(link_id), int(time.time())),
         )
 
     async def is_flyer_task_done(self, user_id: int, signature: str) -> bool:

@@ -597,10 +597,12 @@ async def channels_list(callback: CallbackQuery, bot: Bot, db: Database, setting
                 lines.append(f"• <code>link:{int(l['id'])}</code> — {l['title'] or ''} {l['url']}")
     else:
         rows = await db.list_task_channels_full()
+        links = await db.list_task_links()
         if not rows:
-            await callback.answer()
-            await callback.message.answer("Список пуст.")
-            return
+            if not links:
+                await callback.answer()
+                await callback.message.answer("Список пуст.")
+                return
         for r in rows[:50]:
             cid = int(r["chat_id"])
             title = (r["title"] or "").strip()
@@ -611,6 +613,14 @@ async def channels_list(callback: CallbackQuery, bot: Bot, db: Database, setting
             name = title or (("@" + username) if username else str(cid))
             extra = f" | {url}" if url else ""
             lines.append(f"• {chk} <b>{name}</b> — <code>{cid}</code> | 💰 {reward:.2f}{extra}")
+        if links:
+            lines.append("")
+            lines.append("🔗 <b>Задания-ссылки (без проверки)</b>:")
+            for l in links[:30]:
+                rid = int(l["id"])
+                u = str(l["url"] or "")
+                r = float(l["reward"]) if l["reward"] is not None else settings.get_float("TASK_REWARD")
+                lines.append(f"• <code>link:{rid}</code> — 💰 {r:.2f} | {u}")
     await callback.answer()
     await callback.message.answer("\n".join(lines))
 
@@ -629,6 +639,7 @@ async def channels_add_del_start(callback: CallbackQuery, state: FSMContext) -> 
     await callback.message.answer(
         "Отправьте <b>ID</b> (например: <code>-100123...</code>) или <b>@username</b>.\n"
         "Для спонсоров можно отправить ссылку <code>https://...</code> (без проверки).\n"
+        "Для заданий можно отправить ссылку <code>https://...</code> (без проверки, с наградой).\n"
         "Без проверки канала: начните с <code>!</code> (пример: <code>!@mychannel</code>).\n"
         "🤖 Ботов можно добавлять только <b>без проверки</b> (как ссылку или как задание без проверки).\n"
         "Удалить ссылку: <code>link:ID</code>.\n"
@@ -689,6 +700,15 @@ async def channels_add_del_apply(
         await state.clear()
         return
 
+    # Задания: можно добавить ссылку без проверки (URL без target)
+    if kind == "tasks" and action == "add" and forced_url is None and (raw.startswith("http://") or raw.startswith("https://")):
+        if reward is None:
+            reward = settings.get_float("TASK_REWARD")
+        link_id = await db.add_task_link(raw, title=None, reward=float(reward), check_required=False)
+        await message.answer(f"✅ Задание-ссылка добавлено: <code>link:{link_id}</code> (💰 {float(reward):.2f})")
+        await state.clear()
+        return
+
     # Спонсоры: удалить ссылку
     if kind == "sponsors" and action == "del" and raw.lower().startswith("link:"):
         link_id = safe_int(raw.split(":", 1)[1])
@@ -697,6 +717,17 @@ async def channels_add_del_apply(
             return
         await db.remove_sponsor_link(link_id)
         await message.answer("✅ Ссылка удалена.")
+        await state.clear()
+        return
+
+    # Задания: удалить задание-ссылку
+    if kind == "tasks" and action == "del" and raw.lower().startswith("link:"):
+        link_id = safe_int(raw.split(":", 1)[1])
+        if link_id is None:
+            await message.answer("Неверный формат. Пример: link:12")
+            return
+        await db.remove_task_link(link_id)
+        await message.answer("✅ Задание-ссылка удалено.")
         await state.clear()
         return
 

@@ -379,6 +379,15 @@ async def tasks_menu(callback: CallbackQuery, bot: Bot, db: Database, flyer: Fly
         reward = float(r["reward"]) if r["reward"] is not None else settings.get_float("TASK_REWARD")
         cards.append(_TaskCard(key=f"l:{chat_id}", title=title, link=link, reward=reward))
 
+    # Локальные задания-ссылки (без проверки).
+    link_rows = await db.list_task_links()
+    for l in (link_rows or [])[:30]:
+        link_id = int(l["id"])
+        url = (l["url"] or "").strip()
+        title = (l["title"] or "").strip() if (l["title"] is not None) else ""
+        reward = float(l["reward"]) if l["reward"] is not None else settings.get_float("TASK_REWARD")
+        cards.append(_TaskCard(key=f"u:{link_id}", title=title or f"Задание #{link_id}", link=url or None, reward=reward))
+
     # Задания Flyer (если ключ задан).
     if flyer is not None:
         flyer_tasks = await flyer.get_tasks(
@@ -510,6 +519,38 @@ async def task_check(
         return
 
     key = callback.data.split(":", 2)[-1]
+    if key.startswith("u:"):
+        link_id = safe_int(key.split(":", 1)[1])
+        if link_id is None:
+            await callback.answer("Ошибка задания.", show_alert=True)
+            return
+        if await db.is_task_link_done(user.user_id, link_id):
+            await callback.answer("✅ Уже выполнено.", show_alert=True)
+            return
+        row = await db.get_task_link(link_id)
+        if not row:
+            await callback.answer("Задание не найдено.", show_alert=True)
+            return
+        reward = float(row["reward"]) if row["reward"] is not None else settings.get_float("TASK_REWARD")
+        await db.mark_task_link_done(user.user_id, link_id)
+        await db.change_balance(user.user_id, reward)
+        referrer_id = await db.try_reward_referral(
+            user.user_id,
+            ref_reward=settings.get_float("REF_REWARD"),
+            ref_bonus=None,
+        )
+        await callback.answer("✅ Засчитано!")
+        await callback.message.answer(f"🎉 Задание выполнено!\n💰 Начислено: <b>+{reward:.2f}</b>")
+        if referrer_id is not None:
+            try:
+                await bot.send_message(
+                    referrer_id,
+                    f"✅ Ваш реферал {fmt_user(user.username, user.user_id)} выполнил 2 задания!\n"
+                    f"💰 Начислено: <b>+{settings.get_float('REF_REWARD'):.2f}</b>",
+                )
+            except Exception:
+                pass
+        return
     if key.startswith("l:"):
         chat_id = safe_int(key.split(":", 1)[1])
         if chat_id is None:
